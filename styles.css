@@ -22,3 +22,5 @@ h1,h2{font-family:'Italiana',Georgia,serif;letter-spacing:-2px;font-weight:400}h
 
 
 
+
+h1{font-size:clamp(48px,6.4vw,100px)}@media(max-width:1000px) and (min-width:761px){h1{font-size:6.4vw}.hero{gap:4%}.eyebrow{letter-spacing:2px;font-size:8px}}@media(max-width:760px){h1{font-size:clamp(48px,10vw,72px)}}
