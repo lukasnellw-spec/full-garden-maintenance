@@ -1,0 +1,15 @@
+{
+  "id": "./",
+  "name": "Full Garden Maintenance — Member",
+  "short_name": "Garden Service",
+  "description": "Your garden service account, invoices and Manager communications.",
+  "start_url": "./#member/dashboard",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f3ed",
+  "theme_color": "#15382d",
+  "icons": [
+    {"src":"app-icon-192.png","sizes":"192x192","type":"image/png","purpose":"any"},
+    {"src":"app-icon-512.png","sizes":"512x512","type":"image/png","purpose":"any"}
+  ]
+}

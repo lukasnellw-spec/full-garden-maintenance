@@ -21,7 +21,7 @@ jobs:
       - name: Prepare public website
         run: |
           mkdir public
-          cp index.html styles.css script.js public/
+          cp index.html styles.css script.js app.webmanifest garden-sw.js app-icon-192.png app-icon-512.png app-icon-180.png public/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
