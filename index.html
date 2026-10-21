@@ -77,7 +77,8 @@ formTask.addEventListener('submit',event=>{
 content.addEventListener('click',event=>{
  if(!event.target.closest('#remove-custom-function'))return;
  const slug=location.hash.slice(7);const item=sections.find(s=>s.custom&&s.slug===slug);if(!item)return;
- if(!window.confirm('Remove "'+item.name+'" from this browser?'))return;
+ const removeButton=content.querySelector('#remove-custom-function');
+ if(removeButton.dataset.confirmed!=='yes'){removeButton.dataset.confirmed='yes';removeButton.textContent='Confirm removal';document.querySelector('#custom-action-error').textContent='Click Confirm removal to remove this custom function from this browser, or leave the page to cancel.';return;}
  try{localStorage.setItem(storageKey,JSON.stringify(sections.filter(s=>s.custom&&s.slug!==slug)));}catch{document.querySelector('#custom-action-error').textContent='The function could not be removed. Please try again.';return;}
  sections.splice(sections.indexOf(item),1);renderNav();location.hash='admin/dashboard';
 });
