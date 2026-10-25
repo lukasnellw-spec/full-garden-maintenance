@@ -868,7 +868,7 @@ function captureAttendanceSnapshot(records,managerId,date,closedAt){
 }
 function completedAttendanceRows(reports){
  return reports.filter(r=>r.kind==='daily-report'&&r.status==='completed').sort((a,b)=>b.date.localeCompare(a.date)).flatMap(r=>(r.attendance?.entries||[]).map(e=>({
- date:r.date,manager:r.managerName||r.managerId,managerId:r.managerId,staff:e.name||'Staff',status:e.attendanceStatus||(e.confirmedAt?'Present':'Not recorded'),
+ date:r.date,manager:r.managerName||r.managerId,managerId:r.managerId,staffId:e.staffId,medicalLetterIds:e.medicalLetterIds||[],staff:e.name||'Staff',status:e.attendanceStatus||(e.confirmedAt?'Present':'Not recorded'),
  confirmation:e.confirmedAt?new Date(e.confirmedAt).toLocaleTimeString('en-GB',{timeZone:'Africa/Johannesburg',hour:'2-digit',minute:'2-digit'}):'Not confirmed',
  start:e.startTime||e.lateStart||'',note:e.statusNote||'',closed:new Date(r.completed||r.updated).toLocaleString('en-ZA',{timeZone:'Africa/Johannesburg'}),reportId:r.id
  })));
@@ -878,9 +878,14 @@ async function renderAttendanceOverview(){
  const all=await workflowStore('allocationSettings','list'),reports=all.filter(r=>r.kind==='daily-report'&&r.status==='completed'),allRows=completedAttendanceRows(reports),filters=attendanceOverviewFilters;
  const rows=allRows.filter(r=>(!filters.from||r.date>=filters.from)&&(!filters.to||r.date<=filters.to)&&(!filters.manager||r.managerId===filters.manager));
  const managers=[...new Map(reports.map(r=>[r.managerId,r.managerName||r.managerId])).entries()];
- const headers=['Date','Manager','Staff name','Attendance status','Staff code confirmed (SAST)','Start time (SAST)','Manager notes','Day completed (SAST)','Report ID'];
- const values=rows.map(r=>[r.date,r.manager,r.staff,r.status,r.confirmation,r.start,r.note,r.closed,r.reportId]);
+ const medicalDocs=(await workflowStore('documentTemplates','list')).filter(d=>d.kind==='medical-letter');
+ const headers=['Date','Manager','Staff name','Attendance status','Staff code confirmed (SAST)','Start time (SAST)','Manager notes','Day completed (SAST)','Report ID','Medical Letter files','Medical Letter approval'];
+ const values=rows.map(r=>[r.date,r.manager,r.staff,r.status,r.confirmation,r.start,r.note,r.closed,r.reportId,medicalDocs.filter(d=>r.medicalLetterIds.includes(d.id)).map(d=>d.fileName).join('; '),medicalDocs.filter(d=>r.medicalLetterIds.includes(d.id)).map(d=>d.reviewStatus).join('; ')]);
  content.innerHTML='<p class="eyebrow">ADMIN · STAFF OVERVIEW</p><h1>Attendance register overview</h1><a class="button" href="#admin/staff">Staff directory ↗</a><p>Read-only spreadsheet of attendance captured when each Manager completes End of Day. Original completed attendance is preserved. Open days appear only after completion. Records remain local to this browser until shared storage is connected.</p><form id="attendance-overview-filter" class="manager-switch"><label>From date<input type="date" name="from" value="'+filters.from+'"></label><label>To date<input type="date" name="to" value="'+filters.to+'"></label><label>Manager<select name="manager"><option value="">All Managers</option>'+managers.map(([id,name])=>'<option value="'+id+'"'+(id===filters.manager?' selected':'')+'>'+escapeHtml(name)+'</option>').join('')+'</select></label><button class="button">Apply filters / refresh</button><p role="status"></p></form><p>'+rows.length+' staff records · '+reports.length+' completed days</p><button class="button" id="attendance-xlsx"'+(!rows.length?' disabled':'')+'>Download Excel spreadsheet ↗</button><button class="dialog-cancel" id="attendance-csv"'+(!rows.length?' disabled':'')+'>Download CSV ↗</button><p id="attendance-export-status" role="status"></p><div class="report-table-scroll"><table class="changes-table" aria-label="Completed staff attendance spreadsheet"><thead><tr>'+headers.map(h=>'<th scope="col">'+h+'</th>').join('')+'</tr></thead><tbody>'+values.map(row=>'<tr>'+row.map(v=>'<td>'+escapeHtml(v)+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>'+(!rows.length?'<p>No completed attendance matches these filters. Complete the Manager’s day to capture attendance.</p>':'')+(reports.some(r=>!r.attendance)?'<p>Some older reports were completed before attendance snapshots were introduced. Their attendance is unavailable; current records are not substituted.</p>':'');
+
+ const archivedLetters=medicalDocs.filter(d=>(!filters.from||d.date>=filters.from)&&(!filters.to||d.date<=filters.to)&&(!filters.manager||d.managerId===filters.manager)).sort((a,b)=>b.date.localeCompare(a.date));
+ content.insertAdjacentHTML('beforeend','<h2>Medical Letter monthly records</h2><p>Documents retain their original file and date/month. Admin evidence approval is separate from the locked attendance snapshot.</p>'+archivedLetters.map(d=>medicalLetterMarkup({id:d.staffId,name:d.staffName},{medicalLetterIds:[d.id]},[d],true,false)).join(''));
+ bindAttendanceMedicalLetters({manager:false,refresh:renderAttendanceOverview});
  const form=document.querySelector('#attendance-overview-filter');form.onsubmit=async e=>{e.preventDefault();if(form.elements.from.value&&form.elements.to.value&&form.elements.from.value>form.elements.to.value){form.querySelector('[role=status]').textContent='From date must be before To date.';return;}attendanceOverviewFilters={from:form.elements.from.value,to:form.elements.to.value,manager:form.elements.manager.value};await renderAttendanceOverview();};
  document.querySelector('#attendance-csv').onclick=()=>{
  const safe=value=>{const s=String(value??'');return /^[=+@\-\t\r]/.test(s)?"'"+s:s;};
@@ -890,7 +895,7 @@ async function renderAttendanceOverview(){
  document.querySelector('#attendance-xlsx').onclick=async()=>{
  const button=document.querySelector('#attendance-xlsx'),status=document.querySelector('#attendance-export-status');button.disabled=true;
  try{const X=await loadSpreadsheetReader(),wb=X.utils.book_new(),sheet=X.utils.aoa_to_sheet([headers,...values]);
- sheet['!cols']=[12,22,24,30,24,20,45,26,45].map(wch=>({wch}));sheet['!autofilter']={ref:sheet['!ref']};X.utils.book_append_sheet(wb,sheet,'Staff Attendance');
+ sheet['!cols']=[12,22,24,30,24,20,45,26,45,40,30].map(wch=>({wch}));sheet['!autofilter']={ref:sheet['!ref']};X.utils.book_append_sheet(wb,sheet,'Staff Attendance');
  downloadLocalBlob(new Blob([X.write(wb,{type:'array',bookType:'xlsx',compression:true})],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),'staff-attendance-overview.xlsx');status.textContent='Excel spreadsheet downloaded.';
  }catch(error){status.textContent=error.message+' You can use Download CSV instead.';}finally{button.disabled=false;}
  };
@@ -907,6 +912,51 @@ async function renderAdminStaff(){
  content.querySelectorAll('[data-staff-register]').forEach(link=>link.onclick=()=>{const selected=staff.find(s=>s.id===link.dataset.staffRegister);if(selected){previewManagerId=selected.managerId;attendanceSelectedStaff=selected.id;attendanceDate=southAfricaToday();try{localStorage.setItem('fgm.manager.preview',selected.managerId);}catch{}}});
 }
 
+
+function medicalLetterMarkup(staff,entry,docs,locked,manager){
+ const letters=docs.filter(d=>(entry?.medicalLetterIds||[]).includes(d.id));
+ return '<section class="client-detail-panel"><h3>Medical Letter — comments &amp; attachment</h3><p>Attachments stay with '+escapeHtml(staff.name)+' and this attendance date/month. Demo storage is only in this browser; use test documents.</p>'+
+ (!locked?'<form data-medical-upload="'+staff.id+'"><label>Medical Letter available?<select name="hasLetter"><option value="No">No</option><option value="Yes">Yes</option></select></label><div data-medical-fields hidden><label>Upload scanned medical letter (PDF, JPG or PNG)<input name="medicalFile" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"></label><p>Scan to PDF or choose a photo. Maximum 10 MB. Save the attendance status before attaching.</p><label>Medical Letter comments<textarea name="letterNote" maxlength="1000"></textarea></label><button class="button">Attach Medical Letter</button></div><p role="status"></p></form>':'<p>Day completed — attachments are retained and cannot be replaced or removed from this attendance record.</p>')+
+ (letters.map(d=>'<article><strong>Medical Letter: '+escapeHtml(d.fileName)+'</strong><p>'+escapeHtml(d.date+' · '+d.staffName+' · '+(d.reviewStatus||'Pending Admin approval'))+'</p><p>'+escapeHtml(d.note||'')+'</p><button type="button" class="dialog-cancel" data-medical-download="'+d.id+'">Download Medical Letter ↗</button>'+(!manager&&(!d.reviewStatus||d.reviewStatus==='Pending Admin approval')?'<button type="button" class="button" data-medical-review="'+d.id+'" data-medical-decision="Approved">Admin: approve letter</button><button type="button" class="dialog-cancel" data-medical-review="'+d.id+'" data-medical-decision="Rejected">Admin: reject letter</button>':'')+'<p role="status"></p></article>').join('')||'<p>No Medical Letter attached.</p>')+'</section>';
+}
+async function saveAttendanceMedicalLetter({staffId,managerId,date,file,note}){
+ if(!file||file.size===0||file.size>10*1024*1024)throw Error('Choose a PDF, JPG or PNG file up to 10 MB.');
+ if(!/\.(pdf|jpe?g|png)$/i.test(file.name)||file.type&&!['application/pdf','image/jpeg','image/png'].includes(file.type))throw Error('Use a PDF, JPG or PNG scanned document.');
+ const digest=await invoiceFingerprint(file),db=await masterDb();
+ return new Promise((resolve,reject)=>{
+ const tx=db.transaction(['allocationSettings','documentTemplates'],'readwrite'),settings=tx.objectStore('allocationSettings'),docs=tx.objectStore('documentTemplates');let failure;
+ const req=settings.getAll();req.onsuccess=()=>{try{
+ const all=req.result,staff=all.find(s=>s.id===staffId&&s.kind==='attendance-staff'&&s.managerId===managerId),day=all.find(d=>d.id==='attendance-day:'+managerId+':'+date),entry=day?.entries.find(e=>e.staffId===staffId);
+ if(date!==southAfricaToday()||all.some(r=>r.id==='daily-report:'+managerId+':'+date&&r.status==='completed'))throw Error('This day is locked. The attachment was not saved.');
+ if(!staff||!entry)throw Error('Save the staff attendance status first, then attach the Medical Letter.');
+ if((entry.medicalLetterIds||[]).length>=5)throw Error('Up to five Medical Letter attachments are allowed per staff member per day.');
+ const id='medical-letter:'+accountId(),doc={id,kind:'medical-letter',staffId,staffName:staff.name,managerId,date,month:date.slice(0,7),fileName:file.name,fileType:file.type,blob:file,sha256:digest,note,created:Date.now(),reviewStatus:'Pending Admin approval',reviewHistory:[]};
+ docs.put(doc);settings.put({...day,entries:day.entries.map(e=>e.staffId===staffId?{...e,medicalLetterIds:[...(e.medicalLetterIds||[]),id]}:e),updated:Date.now()});
+ }catch(error){failure=error;tx.abort();}};
+ tx.oncomplete=resolve;tx.onabort=()=>reject(failure||Error('Medical Letter could not be stored. Nothing was attached.'));tx.onerror=()=>{};
+ });
+}
+async function reviewAttendanceMedicalLetter(id,decision){
+ if(!['Approved','Rejected'].includes(decision))throw Error('Choose an approval decision.');
+ const db=await masterDb();return new Promise((resolve,reject)=>{
+ const tx=db.transaction('documentTemplates','readwrite'),store=tx.objectStore('documentTemplates');let failure;
+ const req=store.get(id);req.onsuccess=()=>{try{const d=req.result;if(!d||d.kind!=='medical-letter')throw Error('Medical Letter not found.');if(d.reviewStatus&&d.reviewStatus!=='Pending Admin approval')throw Error('Letter has already been reviewed. Refresh this page.');store.put({...d,reviewStatus:decision,reviewedAt:Date.now(),reviewHistory:[...(d.reviewHistory||[]),{decision,at:Date.now(),role:'Admin preview'}]});}catch(error){failure=error;tx.abort();}};
+ tx.oncomplete=resolve;tx.onabort=()=>reject(failure||Error('Review could not be saved.'));tx.onerror=()=>{};
+ });
+}
+function bindAttendanceMedicalLetters({manager,managerId,date,refresh}){
+ content.querySelectorAll('[data-medical-upload]').forEach(form=>{
+ const select=form.elements.hasLetter,fields=form.querySelector('[data-medical-fields]');
+ select.onchange=()=>{fields.hidden=select.value!=='Yes';form.elements.medicalFile.required=select.value==='Yes';if(select.value!=='Yes'){form.elements.medicalFile.value='';form.elements.letterNote.value='';}};
+ form.onsubmit=async event=>{event.preventDefault();const status=form.querySelector('[role=status]'),button=form.querySelector('button');if(select.value!=='Yes')return;button.disabled=true;
+ try{await saveAttendanceMedicalLetter({staffId:form.dataset.medicalUpload,managerId,date,file:form.elements.medicalFile.files[0],note:form.elements.letterNote.value.trim()});await refresh();}
+ catch(error){status.textContent=error.message;button.disabled=false;}
+ };
+ });
+ content.querySelectorAll('[data-medical-download]').forEach(button=>button.onclick=async()=>{const status=button.parentElement.querySelector('[role=status]');try{const d=await workflowStore('documentTemplates','get',button.dataset.medicalDownload);if(!d||d.kind!=='medical-letter'||manager&&d.managerId!==managerId)throw Error('Medical Letter is unavailable for this Manager.');downloadLocalBlob(d.blob,d.fileName);}catch(error){if(status)status.textContent=error.message;}});
+ if(!manager)content.querySelectorAll('[data-medical-review]').forEach(button=>button.onclick=async()=>{button.disabled=true;const status=button.parentElement.querySelector('[role=status]');try{await reviewAttendanceMedicalLetter(button.dataset.medicalReview,button.dataset.medicalDecision);await refresh();}catch(error){if(status)status.textContent=error.message;button.disabled=false;}});
+}
+
 let attendanceSelectedStaff='';
 async function renderStaffAttendance(){
  const manager=location.hash.startsWith('#manager/'),switcher=await managerSelectMarkup();
@@ -916,6 +966,7 @@ async function renderStaffAttendance(){
  const day=all.find(r=>r.id==='attendance-day:'+managerId+':'+date);
  const locked=date!==today||all.some(r=>r.id==='daily-report:'+managerId+':'+date&&r.status==='completed');
  const entries=day?.entries||[];
+ const medicalDocs=(await workflowStore('documentTemplates','list')).filter(d=>d.kind==='medical-letter');
  const attendanceStatuses=['Present','Absent with communication','Absent no communication','Sick','Late','Absconded','On Leave','WCA'];
  if(!staff.some(s=>s.id===attendanceSelectedStaff))attendanceSelectedStaff='';
  const visibleStaff=manager?staff.filter(s=>s.id===attendanceSelectedStaff):staff;
@@ -933,6 +984,7 @@ async function renderStaffAttendance(){
  return '<article class="client-detail-panel"><h2>'+escapeHtml(s.name)+'</h2><p><strong>'+escapeHtml(currentStatus)+'</strong></p>'+(entry?.confirmedAt?'<p>Staff code confirmed at '+escapeHtml(new Date(entry.confirmedAt).toLocaleTimeString('en-ZA',{timeZone:'Africa/Johannesburg',hour:'2-digit',minute:'2-digit'}))+'</p>':'<p>Staff has not confirmed presence.</p>')+
  '<form data-staff-status="'+s.id+'"><label>Attendance status<select name="attendanceStatus" required'+(locked?' disabled':'')+'><option value="">Choose status</option>'+attendanceStatuses.map(value=>'<option value="'+value+'"'+(value===currentStatus?' selected':'')+'>'+value+'</option>').join('')+'</select></label><label>Manager note (optional)<textarea name="statusNote" maxlength="1000"'+(locked?' disabled':'')+'>'+escapeHtml(entry?.statusNote||'')+'</textarea></label>'+(!locked?'<button class="button">Submit attendance status</button>':'<p>Day locked — status cannot be changed.</p>')+'<p role="status"></p></form>'+
  (entry?'<p>Start time recorded by Manager: '+escapeHtml(entry.startTime||entry.lateStart||'Awaiting Manager submission')+'</p>':'')+
+ medicalLetterMarkup(s,entry,medicalDocs,locked,manager)+
  (!s.pinHash&&!locked?'<form data-staff-enrol="'+s.id+'"><h3>Staff member: choose your own code</h3>'+pinFields+'<label>Repeat six-digit code<input name="repeatPin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" required></label><button class="button">Save my private code</button><p role="status"></p></form>':
  s.pinHash&&!entry?.confirmedAt&&!locked?'<form data-staff-confirm="'+s.id+'"><h3>2. Staff confirms presence</h3>'+pinFields+'<button class="button">Submit my code — I am present</button><p role="status"></p></form>':'')+
  (entry?.confirmedAt&&isWorking&&!locked?'<form data-staff-late="'+s.id+'"><h3>3. Manager submits start time</h3><label>Actual start time (including late arrivals)<input name="lateStart" type="time" required value="'+escapeHtml(entry.startTime||entry.lateStart||'')+'"></label><button class="button">Submit start time</button><p role="status"></p></form>':'')+'</article>';
@@ -985,6 +1037,7 @@ async function renderStaffAttendance(){
  await renderStaffAttendance();
  }catch(err){status.textContent=err.message;if(button)button.disabled=false;}
  });
+ bindAttendanceMedicalLetters({manager,managerId,date,refresh:renderStaffAttendance});
  const files=all;const records=(await workflowStore('documentTemplates','list')).filter(r=>r.kind==='attendance-register'&&r.managerId===managerId);
  document.querySelector('#attendance-files').innerHTML=records.map(r=>'<p>'+escapeHtml(r.date+' · '+r.team)+' <button class="dialog-cancel" data-attendance-download="'+r.id+'">Download</button></p>').join('')||'<p>No previous files.</p>';
  document.querySelectorAll('[data-attendance-download]').forEach(b=>b.onclick=async()=>{const r=await workflowStore('documentTemplates','get',b.dataset.attendanceDownload);if(r)downloadLocalBlob(r.blob,r.fileName);});
