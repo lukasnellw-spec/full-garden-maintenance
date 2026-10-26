@@ -339,10 +339,10 @@ async function renderMasterWeeklyList(){
  try{
  const docs=await workflowStore('documentTemplates','list'),weekly=await workflowStore('allocationSettings','get','weekly-list-current');
  if(location.hash!==currentHash)return;
- const source=chooseUploadedMasterWeekly(docs,weekly);
+ const source=chooseUploadedMasterWeekly(docs,weekly)||(await masterStore('list')).filter(f=>!f.weeklySourceDocumentId&&/weekly|week[\s_-]*list/i.test(f.name||'')).sort((a,b)=>b.created-a.created).map(f=>({...f,kind:'legacy-master-weekly'}))[0];
  if(!source){content.innerHTML='<p class="eyebrow">MASTER SHEET</p><h1>Weekly list</h1><p>No weekly-list file has been uploaded or linked to Master Sheet in this browser yet.</p><a class="button" href="#admin/weekly-document">Upload weekly list ↗</a><a class="button" href="#admin/admin-document">Upload any file &amp; link to Master Sheet ↗</a><a class="dialog-cancel" href="#admin/master-files">Open other Master files ↗</a>';return;}
- const id='weekly-master:'+source.id;let working=await masterStore('get',id);
- if(!working){working={id,name:source.fileName||source.title||'Weekly list',blob:source.blob,size:source.size??source.blob.size,created:source.created||Date.now(),source:'imported',weeklySourceDocumentId:source.id};await masterStore('put',working);}
+ const id=source.kind==='legacy-master-weekly'?source.id:'weekly-master:'+source.id;let working=await masterStore('get',id);
+ if(!working){working={id,name:source.fileName||source.title||source.name||'Weekly list',blob:source.blob,size:source.size??source.blob.size,created:source.created||Date.now(),source:'imported',weeklySourceDocumentId:source.id};await masterStore('put',working);}
  if(location.hash!==currentHash)return;rememberMasterFile(id);renderMaster();
  const title=content.querySelector('h1');if(title)title.textContent='Master Sheet — uploaded weekly list';
  const intro=document.createElement('div');intro.className='workflow-note';intro.innerHTML='<strong>'+escapeHtml(working.name)+'</strong><p>Opened from your uploaded weekly-list / Master Sheet link. This is a retained working copy; the uploaded original is kept. Editing it does not automatically re-map the weekly service schedule.</p><a href="#admin/weekly-document">Upload or map weekly service list ↗</a> · <a href="#admin/weekly-list">View weekly schedule ↗</a> · <a href="#admin/master-files">Manage other Master files ↗</a>';title?.insertAdjacentElement('afterend',intro);
