@@ -298,7 +298,22 @@ function drawMasterGrid(){
  html+='</tbody></table></div><div class="document-paging"><button type="button" data-grid-move="rows-back"'+(rowStart===0?' disabled':'')+'>← Previous rows</button><button type="button" data-grid-move="rows-next">Next rows →</button><button type="button" data-grid-move="cols-back"'+(colStart===0?' disabled':'')+'>← Previous columns</button><button type="button" data-grid-move="cols-next">Next columns →</button></div><p class="document-help">Edit a value, then leave the cell or press Enter to save. Yellow cells have altered details. First entries into empty cells are excluded from the report. Original uploads remain intact. Formula cells and protected sheets are read-only; Excel is required for formula recalculation. Edited exports focus on cell data; charts, macros and advanced formatting may not carry over. Download original keeps the untouched upload.</p>';
  host.innerHTML=html;
 }
-async function openMasterDocument(file){
+
+function isMicrosoftExcelFile(name){return /\.(xlsx|xls|xlsm|xlsb|csv|tsv|ods)$/i.test(name||'');}
+async function downloadMasterForMicrosoftExcel(file){
+ const edited=(file.cellEdits||[]).length||(file.rowInsertions||[]).length||(file.clientStatusRules||[]).length;
+ if(!edited){downloadLocalBlob(file.blob,file.name);return;}
+ const workbook=await workbookFromStoredFile(file),X=await loadSpreadsheetReader();
+ downloadLocalBlob(new Blob([X.write(workbook,{type:'array',bookType:'xlsx',compression:true})],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),file.name.replace(/\.[^.]+$/,'')+'-working.xlsx');
+}
+function renderMicrosoftExcelOpenPanel(file,host){
+ const edited=(file.cellEdits||[]).length||(file.rowInsertions||[]).length||(file.clientStatusRules||[]).length;
+ host.innerHTML='<section class="document-unavailable"><h2>View in Microsoft Excel</h2><p>Excel files now use Microsoft Excel as the preferred viewer. Download '+(edited?'the saved working copy':'the original workbook')+', then choose Open in Microsoft Excel from your browser downloads.</p><button type="button" class="button" id="master-open-excel">Download &amp; open in Microsoft Excel ↗</button><p>Browsers cannot directly open a browser-stored file in the desktop Excel app. If asked, choose Microsoft Excel to open the download.</p><p>Changes made in Excel stay in the downloaded file. Upload the revised workbook to Admin Documents and link it to Master Sheet when ready.</p><button type="button" class="dialog-cancel" id="master-browser-editor">Use website editor instead</button><p id="master-excel-status" role="status"></p></section>';
+ document.querySelector('#master-open-excel').onclick=async()=>{const button=document.querySelector('#master-open-excel'),status=document.querySelector('#master-excel-status');button.disabled=true;try{await downloadMasterForMicrosoftExcel(file);status.textContent='Download prepared. Open the downloaded file in Microsoft Excel.';}catch(error){status.textContent=error.message;}finally{button.disabled=false;}};
+ document.querySelector('#master-browser-editor').onclick=()=>openMasterDocument(file,{forceBrowser:true});
+}
+
+async function openMasterDocument(file,{forceBrowser=false}={}){
  const panel=document.querySelector('#master-working-document');if(!panel)return;const epoch=++masterPreviewEpoch;rememberMasterFile(file.id);masterWorkbook=null;masterSheetIndex=0;masterRowPage=0;masterColPage=0;
  if(masterPreviewUrl){URL.revokeObjectURL(masterPreviewUrl);masterPreviewUrl='';}
  document.querySelector('#master-active-select').value=file.id;
@@ -306,6 +321,7 @@ async function openMasterDocument(file){
  document.querySelector('#master-document-name').textContent=file.name;
  const host=document.querySelector('#master-document-body');host.innerHTML='<p class="document-loading">Opening document…</p>';
  const ext=file.name.split('.').pop().toLowerCase();
+ if(isMicrosoftExcelFile(file.name)&&!forceBrowser){renderMicrosoftExcelOpenPanel(file,host);return;}
  try{
   if(['xlsx','xls','xlsb','xlsm','ods','csv','tsv'].includes(ext)){
    const X=await loadSpreadsheetReader();const data=await file.blob.arrayBuffer();if(epoch!==masterPreviewEpoch||!host.isConnected)return;
@@ -866,7 +882,8 @@ async function renderAdminLibraryDocument(encodedId){
  let id;try{id=decodeURIComponent(encodedId);}catch{id='';}const d=await workflowStore('documentTemplates','get',id);
  if(d?.kind!=='admin-library-file'){content.innerHTML='<a href="#admin/admin-document">← Admin Documents</a><h1>Document not found</h1><p>This file may exist in another browser. File storage is currently local to this device.</p>';return;}
  const url=location.href.split('#')[0]+'#admin/document/'+encodeURIComponent(id);
- content.innerHTML='<a class="workspace-back" href="#admin/admin-document">← ADMIN DOCUMENTS</a><p class="eyebrow">SAVED ADMIN FILE</p><h1>'+escapeHtml(d.title)+'</h1><p>'+escapeHtml(d.fileName)+' · '+escapeHtml(fileSize(d.size))+'</p><p>'+escapeHtml(d.description||'')+'</p><button type="button" class="button" data-library-download="'+id+'">Download original file ↗</button><section class="client-detail-panel"><h2>File link</h2><p>Use this link from another page in this browser. Shared storage is needed before it will work on other devices.</p><input id="admin-file-link" aria-label="Saved file link" readonly><button class="dialog-cancel" id="copy-admin-file-link">Copy file link</button><p id="file-link-status" role="status"></p></section><form id="admin-file-pages" class="client-onboarding-form"><h2>Link this file to pages</h2><label>Website pages<select name="linkedPages" multiple size="8">'+adminDocumentOptions(d.linkedPages||[])+'</select></label><button class="button">Save page links</button><p role="status"></p></form>';
+ const excelFile=isMicrosoftExcelFile(d.fileName);
+ content.innerHTML='<a class="workspace-back" href="#admin/admin-document">← ADMIN DOCUMENTS</a><p class="eyebrow">SAVED ADMIN FILE</p><h1>'+escapeHtml(d.title)+'</h1><p>'+escapeHtml(d.fileName)+' · '+escapeHtml(fileSize(d.size))+'</p><p>'+escapeHtml(d.description||'')+'</p><button type="button" class="button" data-library-download="'+id+'">'+(excelFile?'Download &amp; open in Microsoft Excel ↗':'Download original file ↗')+'</button>'+(excelFile?'<p>Open the downloaded file in Microsoft Excel. The browser may ask you to choose the app. Upload the revised file here after editing; desktop changes do not automatically sync to this browser-stored copy.</p>':'')+'<section class="client-detail-panel"><h2>File link</h2><p>Use this link from another page in this browser. Shared storage is needed before it will work on other devices.</p><input id="admin-file-link" aria-label="Saved file link" readonly><button class="dialog-cancel" id="copy-admin-file-link">Copy file link</button><p id="file-link-status" role="status"></p></section><form id="admin-file-pages" class="client-onboarding-form"><h2>Link this file to pages</h2><label>Website pages<select name="linkedPages" multiple size="8">'+adminDocumentOptions(d.linkedPages||[])+'</select></label><button class="button">Save page links</button><p role="status"></p></form>';
  document.querySelector('#admin-file-link').value=url;document.querySelector('#copy-admin-file-link').onclick=async()=>{const field=document.querySelector('#admin-file-link'),status=document.querySelector('#file-link-status');try{await navigator.clipboard.writeText(field.value);status.textContent='File link copied.';}catch{field.focus();field.select();status.textContent='Select and copy the link above.';}};
  const form=document.querySelector('#admin-file-pages');form.onsubmit=async e=>{e.preventDefault();const status=form.querySelector('[role=status]'),pages=Array.from(form.elements.linkedPages.selectedOptions).map(o=>o.value),allowed=new Set(adminDocumentTargets().map(t=>t.hash));try{if(pages.some(h=>!allowed.has(h)))throw Error('Choose valid pages.');const current=await workflowStore('documentTemplates','get',id);if(current?.kind!=='admin-library-file')throw Error('File no longer exists.');await workflowStore('documentTemplates','put',{...current,linkedPages:pages,linksUpdated:Date.now()});status.textContent='Page links saved.';}catch(error){status.textContent=error.message;}};
  bindAdminLibraryDownloads(content);document.title=d.title+' | Admin Documents';
