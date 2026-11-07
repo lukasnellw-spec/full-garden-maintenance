@@ -29,7 +29,8 @@
 <script>
 (()=>{
 const sections=[
-{slug:'master-sheet',name:'Master Sheet',description:'A central view of your business information.',items:['Master records and linked business information']},
+{slug:'master-sheet',name:'Jan-Desember List',description:'Open your uploaded January to December weekly list.',items:['Yearly weekly list and service planning']},
+{slug:'master',name:'Master',description:'Open the separate linked master file.',items:['Linked master workbook and business records']},
 {slug:'admin-document',name:'Admin Document',description:'Your administrative documents in one place.',items:['Document organisation and administrative records']},
 {slug:'client',name:'Client',description:'Client details, memberships and service needs.',items:['Client profiles','Membership details','Service requirements']},
 {slug:'accounts',name:'Accounts',description:'Keep track of invoices and client accounts.',items:['Invoices and account balances','Payment records']},
@@ -311,7 +312,7 @@ function renderMicrosoftExcelOpenPanel(file,host){
  host.innerHTML='<section class="document-unavailable"><h2>View in Microsoft Excel</h2><p>Excel files now use Microsoft Excel as the preferred viewer. Download '+(edited?'the saved working copy':'the original workbook')+', then choose Open in Microsoft Excel from your browser downloads.</p><button type="button" class="button" id="master-open-excel">Download &amp; open in Microsoft Excel ↗</button><p>Browsers cannot directly open a browser-stored file in the desktop Excel app. If asked, choose Microsoft Excel to open the download.</p><p>Changes made in Excel stay in the downloaded file. Upload the revised workbook to Admin Documents and link it to Master Sheet when ready.</p><button type="button" class="dialog-cancel" id="master-browser-editor">Use website editor instead</button><p id="master-excel-status" role="status"></p></section>';
  document.querySelector('#master-open-excel').onclick=async()=>{const button=document.querySelector('#master-open-excel'),status=document.querySelector('#master-excel-status');button.disabled=true;try{await downloadMasterForMicrosoftExcel(file);status.textContent='Download prepared. Open the downloaded file in Microsoft Excel.';}catch(error){status.textContent=error.message;}finally{button.disabled=false;}};
  document.querySelector('#master-browser-editor').onclick=()=>openMasterDocument(file,{forceBrowser:true});
- if(location.hash==='#admin/master-sheet'){document.querySelector('#master-excel-status').textContent='Preparing your Microsoft Excel download…';document.querySelector('#master-open-excel').click();}
+ if(location.hash==='#admin/master-sheet'||location.hash==='#admin/master'){document.querySelector('#master-excel-status').textContent='Preparing your Microsoft Excel download…';document.querySelector('#master-open-excel').click();}
 }
 
 async function openMasterDocument(file,{forceBrowser=false}={}){
@@ -346,24 +347,49 @@ content.addEventListener('change',async event=>{
  if(event.target.id==='master-sheet-select'){masterSheetIndex=Number(event.target.value);masterRowPage=0;masterColPage=0;drawMasterGrid();}
 });
 
+
+function dashboardMasterCandidates(documents,files){
+ return [...documents.filter(d=>d.kind==='admin-library-file'&&d.blob).map(d=>({reference:'document:'+d.id,name:d.fileName||d.title,source:d,type:'document'})),...files.filter(f=>f.blob&&!f.weeklySourceDocumentId&&!f.dashboardSourceDocumentId).map(f=>({reference:'file:'+f.id,name:f.name,source:f,type:'file'}))];
+}
+function selectDashboardMaster(candidates,settings){
+ const pinned=candidates.find(c=>c.reference===settings?.reference);if(pinned)return pinned;
+ const linked=candidates.filter(c=>c.type==='document'&&(c.source.linkedPages||[]).includes('#admin/master')).sort((a,b)=>b.source.created-a.source.created);if(linked.length)return linked[0];
+ const named=candidates.filter(c=>/\bmaster\b/i.test(c.name||'')&&!/weekly/i.test(c.name||''));return named.length===1?named[0]:null;
+}
+async function renderDashboardMaster(){
+ const hash=location.hash;content.innerHTML='<h1>Master</h1><p>Opening linked master file…</p>';
+ try{
+ const documents=await workflowStore('documentTemplates','list'),files=await masterStore('list'),settings=await workflowStore('allocationSettings','get','dashboard-master-file'),candidates=dashboardMasterCandidates(documents,files),selected=selectDashboardMaster(candidates,settings);
+ if(location.hash!==hash)return;
+ if(selected){let file=selected.source;
+ if(selected.type==='document'){const id='dashboard-master:'+selected.source.id;file=await masterStore('get',id);if(!file){file={id,name:selected.name,blob:selected.source.blob,size:selected.source.size??selected.source.blob.size,created:selected.source.created||Date.now(),source:'imported',dashboardSourceDocumentId:selected.source.id};await masterStore('put',file);}}
+ if(location.hash!==hash)return;rememberMasterFile(file.id);renderMaster();const heading=content.querySelector('h1');if(heading)heading.textContent='Master';const note=document.createElement('p');note.className='workflow-note';note.textContent='Linked master file: '+selected.name+'. The Jan-Desember List remains a separate dashboard function.';heading?.insertAdjacentElement('afterend',note);
+ }else{content.innerHTML='<p class="eyebrow">ADMIN · MASTER FILE</p><h1>Master</h1><p>Select or upload the master file for this button. The Jan-Desember List has its own separate dashboard function.</p>';}
+ content.insertAdjacentHTML('beforeend','<section class="client-detail-panel"><h2>Link Master to a file</h2><form id="dashboard-master-select"><label>Saved file<select name="reference" required><option value="">Choose master file</option>'+candidates.map(c=>'<option value="'+escapeHtml(c.reference)+'"'+(c.reference===selected?.reference?' selected':'')+'>'+escapeHtml(c.name)+' ('+(c.type==='document'?'Admin Documents':'Master files')+')</option>').join('')+'</select></label><button class="button">Link this file to Master</button><p role="status"></p></form><form id="dashboard-master-upload"><h3>Or upload a master file</h3><label>Master file<input type="file" name="document" required></label><p>No fixed file-size limit; browser storage and memory still apply.</p><button class="button">Upload &amp; link master file</button><p role="status"></p></form></section>');
+ document.querySelector('#dashboard-master-select').onsubmit=async e=>{e.preventDefault();const f=e.target;try{const reference=f.elements.reference.value;if(!candidates.some(c=>c.reference===reference))throw Error('Choose a saved file.');await workflowStore('allocationSettings','put',{id:'dashboard-master-file',reference,updated:Date.now()});await renderDashboardMaster();}catch(error){f.querySelector('[role=status]').textContent=error.message;}};
+ document.querySelector('#dashboard-master-upload').onsubmit=async e=>{e.preventDefault();const form=e.target,button=form.querySelector('button'),status=form.querySelector('[role=status]');button.disabled=true;try{const file=form.elements.document.files[0];if(!file)throw Error('Choose the master file.');const id='admin-document:'+accountId(),db=await masterDb();await new Promise((resolve,reject)=>{const tx=db.transaction(['documentTemplates','allocationSettings'],'readwrite');tx.objectStore('documentTemplates').put({id,kind:'admin-library-file',title:file.name,fileName:file.name,mimeType:file.type,size:file.size,blob:file,description:'Master file linked from the dashboard',linkedPages:['#admin/master'],created:Date.now()});tx.objectStore('allocationSettings').put({id:'dashboard-master-file',reference:'document:'+id,updated:Date.now()});tx.oncomplete=resolve;tx.onabort=()=>reject(Error('Master file could not be saved. Check browser storage.'));tx.onerror=()=>{};});await renderDashboardMaster();}catch(error){status.textContent=error.message;button.disabled=false;}};
+ document.title='Master | Business workspace';
+ }catch(error){if(location.hash===hash)content.innerHTML='<h1>Master</h1><p>'+escapeHtml(error.message)+'</p><a href="#admin/admin-document">Open Admin Documents ↗</a>';}
+}
+
 function chooseUploadedMasterWeekly(documents,weekly){
  const candidates=documents.filter(d=>d.blob&&((d.kind==='admin-library-file'&&(d.linkedPages||[]).includes('#admin/master-sheet'))||d.kind==='weekly-document'));
  candidates.sort((a,b)=>b.created-a.created);
  return candidates[0]||documents.find(d=>d.id===weekly?.documentId&&d.blob)||null;
 }
 async function renderMasterWeeklyList(){
- const currentHash=location.hash;content.innerHTML='<h1>Master Sheet</h1><p role="status">Opening uploaded weekly list…</p>';
+ const currentHash=location.hash;content.innerHTML='<h1>Jan-Desember List</h1><p role="status">Opening uploaded weekly list…</p>';
  try{
  const docs=await workflowStore('documentTemplates','list'),weekly=await workflowStore('allocationSettings','get','weekly-list-current');
  if(location.hash!==currentHash)return;
  const source=chooseUploadedMasterWeekly(docs,weekly)||(await masterStore('list')).filter(f=>!f.weeklySourceDocumentId&&/weekly|week[\s_-]*list/i.test(f.name||'')).sort((a,b)=>b.created-a.created).map(f=>({...f,kind:'legacy-master-weekly'}))[0];
- if(!source){content.innerHTML='<p class="eyebrow">MASTER SHEET</p><h1>Weekly list</h1><p>No weekly-list file has been uploaded or linked to Master Sheet in this browser yet.</p><a class="button" href="#admin/weekly-document">Upload weekly list ↗</a><a class="button" href="#admin/admin-document">Upload any file &amp; link to Master Sheet ↗</a><a class="dialog-cancel" href="#admin/master-files">Open other Master files ↗</a>';return;}
+ if(!source){content.innerHTML='<p class="eyebrow">JAN-DESEMBER LIST</p><h1>Jan-Desember List</h1><p>No weekly-list file has been uploaded or linked to Jan-Desember List in this browser yet.</p><a class="button" href="#admin/weekly-document">Upload weekly list ↗</a><a class="button" href="#admin/admin-document">Upload any file &amp; link to Jan-Desember List ↗</a><a class="dialog-cancel" href="#admin/master-files">Open other Master files ↗</a>';return;}
  const id=source.kind==='legacy-master-weekly'?source.id:'weekly-master:'+source.id;let working=await masterStore('get',id);
  if(!working){working={id,name:source.fileName||source.title||source.name||'Weekly list',blob:source.blob,size:source.size??source.blob.size,created:source.created||Date.now(),source:'imported',weeklySourceDocumentId:source.id};await masterStore('put',working);}
  if(location.hash!==currentHash)return;rememberMasterFile(id);renderMaster();
- const title=content.querySelector('h1');if(title)title.textContent='Master Sheet — uploaded weekly list';
- const intro=document.createElement('div');intro.className='workflow-note';intro.innerHTML='<strong>'+escapeHtml(working.name)+'</strong><p>Opened from your uploaded weekly-list / Master Sheet link. This is a retained working copy; the uploaded original is kept. Editing it does not automatically re-map the weekly service schedule.</p><a href="#admin/weekly-document">Upload or map weekly service list ↗</a> · <a href="#admin/weekly-list">View weekly schedule ↗</a> · <a href="#admin/master-files">Manage other Master files ↗</a>';title?.insertAdjacentElement('afterend',intro);
- }catch(error){if(location.hash===currentHash)content.innerHTML='<h1>Master Sheet</h1><p>'+escapeHtml(error.message)+'</p><a href="#admin/weekly-document">Open weekly uploads ↗</a><a href="#admin/master-files">Other Master files ↗</a>';}
+ const title=content.querySelector('h1');if(title)title.textContent='Jan-Desember List';
+ const intro=document.createElement('div');intro.className='workflow-note';intro.innerHTML='<strong>'+escapeHtml(working.name)+'</strong><p>Opened from your uploaded weekly-list / Jan-Desember List link. This is a retained working copy; the uploaded original is kept. Editing it does not automatically re-map the weekly service schedule.</p><a href="#admin/weekly-document">Upload or map weekly service list ↗</a> · <a href="#admin/weekly-list">View weekly schedule ↗</a> · <a href="#admin/master-files">Manage other Master files ↗</a>';title?.insertAdjacentElement('afterend',intro);
+ }catch(error){if(location.hash===currentHash)content.innerHTML='<h1>Jan-Desember List</h1><p>'+escapeHtml(error.message)+'</p><a href="#admin/weekly-document">Open weekly uploads ↗</a><a href="#admin/master-files">Other Master files ↗</a>';}
 }
 
 function renderMaster(){
@@ -1452,6 +1478,8 @@ function render(focus){
  content.innerHTML='<p class="eyebrow">FULL GARDEN MAINTENANCE</p><h1 tabindex="-1">Dashboard</h1><div class="function-dialog-actions"><a class="button" href="#admin/new-quotes">New Quotes ↗</a><a class="button" href="#admin/events">Events ↗</a></div><p class="workspace-intro">Your business, thoughtfully organised. Choose a section below or use Add Task / Function to create a new section.</p>'+notice+(loadProblem?'<p class="function-error">'+escapeHtml(loadProblem)+'</p>':'')+'<div class="workspace-section-heading"><h2>Your business tools</h2><span>'+sections.length+' CONNECTED SECTIONS</span></div><div class="workspace-grid">'+sections.map((s,i)=>`<a class="workspace-card" href="#admin/${s.slug}"><div class="workspace-card-top"><span>${String(i+1).padStart(2,'0')}</span><span aria-hidden="true">↗</span></div><h2>${escapeHtml(s.name)}</h2><p>${escapeHtml(s.description.length>150?s.description.slice(0,150)+'…':s.description)}</p><span class="card-open">${s.custom?'CUSTOM FUNCTION · ':''}OPEN SECTION →</span></a>`).join('')+'</div><p class="workspace-footnote">We will develop the functions inside each section as your requirements are added.</p>';
  }else if(slug==='change-password'||slug==='manager-change-password'){
  content.innerHTML='<a class="workspace-back" href="#admin/dashboard">← DASHBOARD</a><p class="eyebrow">YOUR ACCOUNT</p><h1 tabindex="-1">Change password</h1><p class="workspace-intro">Update your account password here once secure sign-in is connected.</p>'+notice+'<div class="workspace-empty workspace-password"><h2>Account security</h2><p>Password changes will be enabled after account setup. Please do not enter any passwords in this preview.</p><label>Current password<input type="password" disabled placeholder="Available after account setup"></label><label>New password<input type="password" disabled placeholder="Available after account setup"></label><label>Confirm new password<input type="password" disabled placeholder="Available after account setup"></label><button class="button" type="button" disabled>Change password</button></div>';
+ }else if(slug==='master'){
+ renderDashboardMaster();
  }else if(slug==='master-files'){
  renderMaster();
  }else if(slug==='master-sheet'){
